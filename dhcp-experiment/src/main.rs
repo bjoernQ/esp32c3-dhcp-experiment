@@ -149,6 +149,7 @@ fn main() -> ! {
         socket.work();
 
         if !socket.is_open() && client_got_ip {
+            // this needs to use `unblocking`
             socket.listen_unblocking(80).unwrap();
         }
 
