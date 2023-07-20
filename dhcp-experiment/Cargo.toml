@@ -9,13 +9,12 @@ license = "MIT OR Apache-2.0"
 debug = true
 
 [dependencies]
-hal = { package = "esp32c3-hal", version = "0.9.0" }
+hal = { package = "esp32c3-hal", version = "0.10.0" }
 esp-backtrace = { version = "0.7.0", features = ["esp32c3", "panic-handler", "exception-handler", "print-uart"] }
 esp-println       = { version = "0.5.0", features = ["esp32c3", "log"] }
 
-# esp-wifi branch: "next-smoltcp"
-esp-wifi = { git = "https://github.com/esp-rs/esp-wifi", rev = "bf65f7ebcc489a949eac75875ae39e07c08ac988", features = ["dump-packets", "esp32c3", "embedded-svc", "wifi"] }
-smoltcp = {  git = "https://github.com/smoltcp-rs/smoltcp.git", rev = "a080c825827a4ac40154301ea26895313b507ee4", version = "0.9.1", default-features=false, features = ["log", "proto-igmp", "proto-ipv4", "socket-tcp", "socket-icmp", "socket-udp", "medium-ethernet", "proto-dhcpv4", "socket-raw", "socket-dhcpv4"] }
+esp-wifi = { git = "https://github.com/esp-rs/esp-wifi", rev = "37dd9ed7ae07a86f7afaef34fa4cbb48ad41b210", features = ["dump-packets", "esp32c3", "embedded-svc", "wifi"] }
+smoltcp = { version = "0.10.0", default-features=false, features = ["log", "proto-igmp", "proto-ipv4", "socket-tcp", "socket-icmp", "socket-udp", "medium-ethernet", "proto-dhcpv4", "socket-raw", "socket-dhcpv4"] }
 embedded-svc = { version = "0.25.0", default-features = false}
 log = "0.4.17"
 embedded-io = "0.4.0"
@@ -26,6 +25,3 @@ heapless = "0.7.16"
 dhcp = { path = "../dhcp" }
 
 domain = { version = "0.7", default-features = false }
-
-[patch.'https://github.com/esp-rs/esp-wifi']
-esp-wifi = { path = "/projects/esp/esp-wifi/esp-wifi" }
