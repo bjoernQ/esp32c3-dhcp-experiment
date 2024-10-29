@@ -8,71 +8,60 @@ use domain::base::iana::{Class, Opcode, Rcode};
 use domain::base::octets::Octets512;
 use domain::base::{Record, Rtype};
 use domain::rdata::A;
-use embedded_io::blocking::*;
-use embedded_svc::ipv4::Interface;
-use embedded_svc::wifi::{AccessPointConfiguration, Configuration, Wifi};
+use embedded_io::*;
 
 use esp_backtrace as _;
+use esp_hal::clock::CpuClock;
+use esp_hal::rng::Rng;
+use esp_hal::time;
+use esp_hal::timer::timg::TimerGroup;
 use esp_println::{print, println};
-use esp_wifi::initialize;
-use esp_wifi::wifi::utils::create_network_interface;
-use esp_wifi::wifi::WifiMode;
-use esp_wifi::wifi_interface::{UdpSocket, WifiStack};
-use esp_wifi::{current_millis, EspWifiInitFor};
-use hal::clock::{ClockControl, CpuClock};
-use hal::systimer::SystemTimer;
-use hal::timer::TimerGroup;
-use hal::Rng;
-use hal::{peripherals::Peripherals, prelude::*, Rtc};
+use esp_wifi::wifi::{AccessPointConfiguration, WifiApDevice, WifiDeviceMode};
+use esp_wifi::wifi_interface::UdpSocket;
+use esp_wifi::{
+    init,
+    wifi::{
+        utils::create_network_interface, AccessPointInfo, ClientConfiguration, Configuration,
+        WifiError, WifiStaDevice,
+    },
+    wifi_interface::WifiStack,
+    EspWifiInitFor,
+};
 
+use esp_hal::entry;
 use smoltcp::iface::SocketStorage;
 use smoltcp::wire::{IpAddress, Ipv4Address};
 
 #[entry]
 fn main() -> ! {
     esp_println::logger::init_logger_from_env();
+    let peripherals = esp_hal::init({
+        let mut config = esp_hal::Config::default();
+        config.cpu_clock = CpuClock::max();
+        config
+    });
 
-    let peripherals = Peripherals::take();
-    let mut system = peripherals.SYSTEM.split();
-    let clocks = ClockControl::configure(system.clock_control, CpuClock::Clock160MHz).freeze();
+    esp_alloc::heap_allocator!(72 * 1024);
 
-    // Disable the RTC and TIMG watchdog timers
-    let mut rtc = Rtc::new(peripherals.RTC_CNTL);
-    let timer_group0 = TimerGroup::new(
-        peripherals.TIMG0,
-        &clocks,
-        &mut system.peripheral_clock_control,
-    );
-    let mut wdt0 = timer_group0.wdt;
-    let timer_group1 = TimerGroup::new(
-        peripherals.TIMG1,
-        &clocks,
-        &mut system.peripheral_clock_control,
-    );
-    let mut wdt1 = timer_group1.wdt;
-    rtc.swd.disable();
-    rtc.rwdt.disable();
-    wdt0.disable();
-    wdt1.disable();
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
 
-    let systimer = SystemTimer::new(peripherals.SYSTIMER);
-    let init = initialize(
+    let init = init(
         EspWifiInitFor::Wifi,
-        systimer.alarm0,
+        timg0.timer0,
         Rng::new(peripherals.RNG),
-        system.radio_clock_control,
-        &clocks,
+        peripherals.RADIO_CLK,
     )
     .unwrap();
 
-    let (wifi, _) = peripherals.RADIO.split();
+    let mut wifi = peripherals.WIFI;
     let mut socket_set_entries: [SocketStorage; 3] = Default::default();
     let (iface, device, mut controller, sockets) =
-        create_network_interface(&init, wifi, WifiMode::Ap, &mut socket_set_entries);
-    let mut wifi_stack = WifiStack::new(iface, device, sockets, current_millis);
+        create_network_interface(&init, &mut wifi, WifiApDevice, &mut socket_set_entries).unwrap();
+    let now = || time::now().duration_since_epoch().to_millis();
+    let mut wifi_stack = WifiStack::new(iface, device, sockets, now);
 
     let client_config = Configuration::AccessPoint(AccessPointConfiguration {
-        ssid: "esp-wifi".into(),
+        ssid: "esp-wifi".try_into().unwrap(),
         ..Default::default()
     });
     let res = controller.set_configuration(&client_config);
@@ -84,16 +73,18 @@ fn main() -> ! {
     println!("{:?}", controller.get_capabilities());
 
     wifi_stack
-        .set_iface_configuration(&embedded_svc::ipv4::Configuration::Client(
-            embedded_svc::ipv4::ClientConfiguration::Fixed(embedded_svc::ipv4::ClientSettings {
-                ip: embedded_svc::ipv4::Ipv4Addr::from(parse_ip("192.168.2.1")),
-                subnet: embedded_svc::ipv4::Subnet {
-                    gateway: embedded_svc::ipv4::Ipv4Addr::from(parse_ip("192.168.2.1")),
-                    mask: embedded_svc::ipv4::Mask(24),
+        .set_iface_configuration(&esp_wifi::wifi::ipv4::Configuration::Client(
+            esp_wifi::wifi::ipv4::ClientConfiguration::Fixed(
+                esp_wifi::wifi::ipv4::ClientSettings {
+                    ip: esp_wifi::wifi::ipv4::Ipv4Addr::from(parse_ip("192.168.2.1")),
+                    subnet: esp_wifi::wifi::ipv4::Subnet {
+                        gateway: esp_wifi::wifi::ipv4::Ipv4Addr::from(parse_ip("192.168.2.1")),
+                        mask: esp_wifi::wifi::ipv4::Mask(24),
+                    },
+                    dns: None,
+                    secondary_dns: None,
                 },
-                dns: None,
-                secondary_dns: None,
-            }),
+            ),
         ))
         .unwrap();
 
@@ -207,6 +198,10 @@ fn main() -> ! {
     }
 }
 
+fn current_millis() -> u64 {
+    time::now().duration_since_epoch().to_millis()
+}
+
 fn parse_ip(ip: &str) -> [u8; 4] {
     let mut result = [0u8; 4];
     for (idx, octet) in ip.split(".").into_iter().enumerate() {
@@ -219,7 +214,7 @@ pub struct DhcpServer<'a, 's, 'n>
 where
     'n: 's,
 {
-    dhcp_socket: &'a mut UdpSocket<'s, 'n>,
+    dhcp_socket: &'a mut UdpSocket<'s, 'n, WifiApDevice>,
     dhcp_buffer: [u8; 1536],
     gateway: [u8; 4],
     client_ip: [u8; 4],
@@ -229,7 +224,11 @@ impl<'a, 's, 'n> DhcpServer<'a, 's, 'n>
 where
     'n: 's,
 {
-    fn new(dhcp_socket: &'a mut UdpSocket<'s, 'n>, gateway: [u8; 4], client_ip: [u8; 4]) -> Self {
+    fn new(
+        dhcp_socket: &'a mut UdpSocket<'s, 'n, WifiApDevice>,
+        gateway: [u8; 4],
+        client_ip: [u8; 4],
+    ) -> Self {
         Self {
             dhcp_socket,
             dhcp_buffer: [0u8; 1536],
@@ -342,7 +341,7 @@ pub struct DnsServer<'a, 's, 'n>
 where
     'n: 's,
 {
-    dns_socket: &'a mut UdpSocket<'s, 'n>,
+    dns_socket: &'a mut UdpSocket<'s, 'n, WifiApDevice>,
     dns_buffer: [u8; 1536],
     ip: [u8; 4],
     ttl: Duration,
@@ -352,7 +351,11 @@ impl<'a, 's, 'n> DnsServer<'a, 's, 'n>
 where
     'n: 's,
 {
-    fn new(dns_socket: &'a mut UdpSocket<'s, 'n>, ip: [u8; 4], ttl: Duration) -> Self {
+    fn new(
+        dns_socket: &'a mut UdpSocket<'s, 'n, WifiApDevice>,
+        ip: [u8; 4],
+        ttl: Duration,
+    ) -> Self {
         Self {
             dns_socket,
             dns_buffer: [0u8; 1536],
