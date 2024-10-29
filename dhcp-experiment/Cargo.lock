@@ -353,6 +353,7 @@ dependencies = [
  "esp-riscv-rt",
  "esp32c3",
  "fugit",
+ "log",
  "nb 1.1.0",
  "paste",
  "portable-atomic",
@@ -436,6 +437,7 @@ dependencies = [
  "fugit",
  "heapless",
  "libm",
+ "log",
  "no-std-net",
  "num-derive",
  "num-traits",
@@ -451,6 +453,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f339ddb1664812e79992a8231a3f8603456c80b769066313150831f2b0bf66e7"
 dependencies = [
  "anyhow",
+ "log",
 ]
 
 [[package]]

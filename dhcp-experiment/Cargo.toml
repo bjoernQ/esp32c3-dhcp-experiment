@@ -25,6 +25,7 @@ esp-wifi = { version = "0.10.1", features = [
     "wifi",
     "wifi-default",
     "utils",
+    "log",
 ] }
 smoltcp = { version = "0.11.0", default-features = false, features = [
     "log",

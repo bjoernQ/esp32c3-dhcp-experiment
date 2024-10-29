@@ -16,13 +16,12 @@ use esp_hal::rng::Rng;
 use esp_hal::time;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println::{print, println};
-use esp_wifi::wifi::{AccessPointConfiguration, WifiApDevice, WifiDeviceMode};
+use esp_wifi::wifi::{AccessPointConfiguration, WifiApDevice};
 use esp_wifi::wifi_interface::UdpSocket;
 use esp_wifi::{
     init,
     wifi::{
-        utils::create_network_interface, AccessPointInfo, ClientConfiguration, Configuration,
-        WifiError, WifiStaDevice,
+        utils::create_network_interface, Configuration,
     },
     wifi_interface::WifiStack,
     EspWifiInitFor,
@@ -34,7 +33,7 @@ use smoltcp::wire::{IpAddress, Ipv4Address};
 
 #[entry]
 fn main() -> ! {
-    esp_println::logger::init_logger_from_env();
+    //esp_println::logger::init_logger(log::LevelFilter::Info);
     let peripherals = esp_hal::init({
         let mut config = esp_hal::Config::default();
         config.cpu_clock = CpuClock::max();
@@ -119,7 +118,7 @@ fn main() -> ! {
     let mut dns_server = DnsServer::new(
         &mut dns_socket,
         [192, 168, 2, 1],
-        Duration::from_secs(1 * 60 * 60),
+        Duration::from_secs(60 * 60),
     );
 
     let mut rx_buffer = [0u8; 1536];
@@ -204,7 +203,7 @@ fn current_millis() -> u64 {
 
 fn parse_ip(ip: &str) -> [u8; 4] {
     let mut result = [0u8; 4];
-    for (idx, octet) in ip.split(".").into_iter().enumerate() {
+    for (idx, octet) in ip.split(".").enumerate() {
         result[idx] = u8::from_str_radix(octet, 10).unwrap();
     }
     result
@@ -270,11 +269,11 @@ where
                                     encoder.encode_option(DhcpOption::RebindingTime(75600));
                                     encoder.encode_option(DhcpOption::IpAddressLeaseTime(86400));
                                     encoder.encode_option(DhcpOption::DhcpServerIdentifier(
-                                        self.gateway.clone(),
+                                        self.gateway,
                                     ));
-                                    encoder.encode_option(DhcpOption::Router(self.gateway.clone()));
+                                    encoder.encode_option(DhcpOption::Router(self.gateway));
                                     encoder.encode_option(DhcpOption::DomainNameServer(
-                                        self.gateway.clone(),
+                                        self.gateway,
                                     ));
 
                                     encoder.encode_option(DhcpOption::End);
@@ -283,7 +282,7 @@ where
                                         .send(
                                             IpAddress::Ipv4(Ipv4Address::new(255, 255, 255, 255)),
                                             68,
-                                            &encoder.as_slice(0),
+                                            encoder.as_slice(0),
                                         )
                                         .unwrap();
                                 }
@@ -302,11 +301,11 @@ where
                                     encoder.encode_option(DhcpOption::RebindingTime(75600));
                                     encoder.encode_option(DhcpOption::IpAddressLeaseTime(86400));
                                     encoder.encode_option(DhcpOption::DhcpServerIdentifier(
-                                        self.gateway.clone(),
+                                        self.gateway,
                                     ));
-                                    encoder.encode_option(DhcpOption::Router(self.gateway.clone()));
+                                    encoder.encode_option(DhcpOption::Router(self.gateway));
                                     encoder.encode_option(DhcpOption::DomainNameServer(
-                                        self.gateway.clone(),
+                                        self.gateway,
                                     ));
 
                                     encoder.encode_option(DhcpOption::End);
@@ -315,7 +314,7 @@ where
                                         .send(
                                             IpAddress::Ipv4(Ipv4Address::new(255, 255, 255, 255)),
                                             68,
-                                            &encoder.as_slice(0),
+                                            encoder.as_slice(0),
                                         )
                                         .unwrap();
 
@@ -367,71 +366,68 @@ where
     fn handle_dns(&mut self) {
         self.dns_socket.work();
 
-        match self.dns_socket.receive(&mut self.dns_buffer) {
-            Ok((len, src_addr, src_port)) => {
-                if len > 0 {
-                    log::info!("DNS FROM {:?} / {}", src_addr, src_port);
-                    log::info!("DNS {:02x?}", &self.dns_buffer[..len]);
+        if let Ok((len, src_addr, src_port)) = self.dns_socket.receive(&mut self.dns_buffer) {
+            if len > 0 {
+                log::info!("DNS FROM {:?} / {}", src_addr, src_port);
+                log::info!("DNS {:02x?}", &self.dns_buffer[..len]);
 
-                    let request = &self.dns_buffer[..len];
-                    let response = Octets512::new();
+                let request = &self.dns_buffer[..len];
+                let response = Octets512::new();
 
-                    let message = domain::base::Message::from_octets(request).unwrap();
-                    log::info!("Processing message with header: {:?}", message.header());
+                let message = domain::base::Message::from_octets(request).unwrap();
+                log::info!("Processing message with header: {:?}", message.header());
 
-                    let mut responseb =
-                        domain::base::MessageBuilder::from_target(response).unwrap();
+                let mut responseb =
+                    domain::base::MessageBuilder::from_target(response).unwrap();
 
-                    let response = if matches!(message.header().opcode(), Opcode::Query) {
-                        log::info!("Message is of type Query, processing all questions");
+                let response = if matches!(message.header().opcode(), Opcode::Query) {
+                    log::info!("Message is of type Query, processing all questions");
 
-                        let mut answerb = responseb.start_answer(&message, Rcode::NoError).unwrap();
+                    let mut answerb = responseb.start_answer(&message, Rcode::NoError).unwrap();
 
-                        for question in message.question() {
-                            let question = question.unwrap();
+                    for question in message.question() {
+                        let question = question.unwrap();
 
-                            if matches!(question.qtype(), Rtype::A) {
-                                log::info!(
-                                    "Question {:?} is of type A, answering with IP {:?}, TTL {:?}",
-                                    question,
-                                    self.ip,
-                                    self.ttl
-                                );
+                        if matches!(question.qtype(), Rtype::A) {
+                            log::info!(
+                                "Question {:?} is of type A, answering with IP {:?}, TTL {:?}",
+                                question,
+                                self.ip,
+                                self.ttl
+                            );
 
-                                let record = Record::new(
-                                    question.qname(),
-                                    Class::In,
-                                    self.ttl.as_secs() as u32,
-                                    A::from_octets(self.ip[0], self.ip[1], self.ip[2], self.ip[3]),
-                                );
-                                log::info!("Answering question {:?} with {:?}", question, record);
-                                answerb.push(record).unwrap();
-                            } else {
-                                log::info!(
-                                    "Question {:?} is not of type A, not answering",
-                                    question
-                                );
-                            }
+                            let record = Record::new(
+                                question.qname(),
+                                Class::In,
+                                self.ttl.as_secs() as u32,
+                                A::from_octets(self.ip[0], self.ip[1], self.ip[2], self.ip[3]),
+                            );
+                            log::info!("Answering question {:?} with {:?}", question, record);
+                            answerb.push(record).unwrap();
+                        } else {
+                            log::info!(
+                                "Question {:?} is not of type A, not answering",
+                                question
+                            );
                         }
+                    }
 
-                        answerb.finish()
-                    } else {
-                        log::info!("Message is not of type Query, replying with NotImp");
+                    answerb.finish()
+                } else {
+                    log::info!("Message is not of type Query, replying with NotImp");
 
-                        let headerb = responseb.header_mut();
+                    let headerb = responseb.header_mut();
 
-                        headerb.set_id(message.header().id());
-                        headerb.set_opcode(message.header().opcode());
-                        headerb.set_rd(message.header().rd());
-                        headerb.set_rcode(domain::base::iana::Rcode::NotImp);
+                    headerb.set_id(message.header().id());
+                    headerb.set_opcode(message.header().opcode());
+                    headerb.set_rd(message.header().rd());
+                    headerb.set_rcode(domain::base::iana::Rcode::NotImp);
 
-                        responseb.finish()
-                    };
+                    responseb.finish()
+                };
 
-                    self.dns_socket.send(src_addr, src_port, &response).unwrap();
-                }
+                self.dns_socket.send(src_addr, src_port, &response).unwrap();
             }
-            _ => (),
         }
     }
 }
